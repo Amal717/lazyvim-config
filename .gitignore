@@ -1,0 +1,8 @@
+# Local Neovim cache
+.lazy/
+lsp.log
+
+# Swap files
+*.swp
+*.swo
+
