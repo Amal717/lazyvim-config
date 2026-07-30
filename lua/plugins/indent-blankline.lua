@@ -5,7 +5,7 @@ return {
 
     opts = {
       indent = {
-        char = "│",
+        char = "▏",
         highlight = "IblIndent",
       },
 
@@ -15,7 +15,7 @@ return {
 
       scope = {
         enabled = true,
-        char = "│",
+        char = "▏",
         highlight = "IblScope",
       },
     },
