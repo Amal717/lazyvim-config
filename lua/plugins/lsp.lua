@@ -4,6 +4,7 @@ return {
         "neovim/nvim-lspconfig",
         opts = {
             servers = {
+                -- c / c++
                 clangd = require("lsp.clangd"),
 
                 -- CMake

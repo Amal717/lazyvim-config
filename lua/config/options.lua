@@ -7,3 +7,5 @@ vim.opt.softtabstop = 4
 vim.opt.expandtab = true
 vim.g.autoformat = false
 vim.o.modeline = false
+
+vim.g.lazyvim_python_lsp = "basedpyright"

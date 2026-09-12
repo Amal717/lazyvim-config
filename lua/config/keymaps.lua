@@ -20,12 +20,14 @@ vim.keymap.set("i", "?", "?<C-g>u")
 --  New undo block after an asignment operator
 vim.keymap.set("i", "=", "=<C-g>u")
 
--- dap
+----------------------------------------------------------------------
+-- Debugger
+----------------------------------------------------------------------
+
 local dap = require("dap")
 
--- Debugger
-vim.keymap.set("n", "<F1>", dap.continue, {
-  desc = "DAP Continue",
+vim.keymap.set("n", "<F1>", "<cmd>Debug<CR>", {
+  desc = "Select Linux or STM32 Debug",
 })
 
 vim.keymap.set("n", "<F2>", dap.step_into, {
