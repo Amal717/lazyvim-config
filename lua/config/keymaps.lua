@@ -53,3 +53,10 @@ vim.keymap.set("n", "<F6>", dap.terminate, {
 vim.keymap.set("n", "<F7>", dap.toggle_breakpoint, {
   desc = "DAP Toggle Breakpoint",
 })
+
+-- DAP UI
+local dapui = require("dapui")
+
+vim.keymap.set("n", "<F8>", dapui.toggle, {
+  desc = "Toggle DAP UI",
+})
