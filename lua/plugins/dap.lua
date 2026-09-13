@@ -12,71 +12,82 @@ return {
         config = function()
             local dap = require("dap")
             local dapui = require("dapui")
+            local telescope_builtin = require("telescope.builtin")
 
             ----------------------------------------------------------------------
             -- DAP UI
             ----------------------------------------------------------------------
-
             ---@diagnostic disable-next-line: missing-fields
             dapui.setup({
                 layouts = {
                     {
-                        position = "right",
-                        size = 40,
-
                         elements = {
-                            {
-                                id = "scopes",
-                                size = 1.0,
-                            },
-
-                            -- RTT disabled for now.
-                            -- { id = "rtt", size = 0.5 },
+                            "scopes",
+                            "breakpoints",
+                            "stacks",
+                            "watches",
                         },
+
+                        size = 0.25,
+                        position = "left",
                     },
+
+                    {
+                        elements = {
+                            "repl",
+                            "console",
+                        },
+
+                        size = 0.25,
+                        position = "bottom",
+                    },
+                },
+
+                controls = {
+                    enabled = true,
+                },
+
+                floating = {
+                    border = "rounded",
                 },
             })
 
             ----------------------------------------------------------------------
             -- Virtual text
             ----------------------------------------------------------------------
+
             require("nvim-dap-virtual-text").setup({
                 enabled = true,
-
                 enabled_commands = true,
-
                 highlight_changed_variables = true,
-
-                highlight_new_as_changed = false,
-
+                highlight_new_as_changed = true,
                 show_stop_reason = true,
-
-                commented = true,
-
-                only_first_definition = false,
-
-                all_references = false,
-
+                commented = false,
                 virt_text_pos = "eol",
-
-                virt_lines = false,
-
-                virt_text_win_col = nil,
-
-                clear_on_continue = false,
-
-                display_callback = function(variable)
-                    return variable.name .. " = " .. variable.value
-                end,
+                all_frames = false,
             })
 
             ----------------------------------------------------------------------
-            -- DAP signs
+            -- Signs
             ----------------------------------------------------------------------
 
             vim.fn.sign_define("DapBreakpoint", {
                 text = "●",
                 texthl = "DiagnosticSignError",
+                linehl = "",
+                numhl = "",
+            })
+
+            vim.fn.sign_define("DapBreakpointCondition", {
+                text = "◆",
+                texthl = "DiagnosticSignWarn",
+                linehl = "",
+                numhl = "",
+            })
+
+            vim.fn.sign_define("DapLogPoint", {
+                text = "▶",
+                texthl = "DiagnosticSignHint",
                 linehl = "",
                 numhl = "",
             })
@@ -96,14 +107,12 @@ return {
             })
 
             ----------------------------------------------------------------------
-            -- Linux GDB adapter
+            -- GDB adapter for Linux
             ----------------------------------------------------------------------
 
             dap.adapters.gdb = {
                 type = "executable",
-
                 command = "gdb",
-
                 args = {
                     "-i",
                     "dap",
@@ -111,93 +120,86 @@ return {
             }
 
             ----------------------------------------------------------------------
-            -- Linux C configuration
-            ----------------------------------------------------------------------
-
-            dap.configurations.c = dap.configurations.c or {}
-
-            table.insert(dap.configurations.c, {
-                name = "Linux Debug",
-
-                type = "gdb",
-                request = "launch",
-
-                -- This is replaced by the Telescope-selected executable.
-                program = function()
-                    error(
-                        "Use :Debug or F1 to select the Linux executable"
-                    )
-                end,
-
-                cwd = "${workspaceFolder}",
-
-                stopAtBeginningOfMainSubprogram = false,
-            })
-
-            ----------------------------------------------------------------------
-            -- Linux C++ configuration
-            ----------------------------------------------------------------------
-
-            dap.configurations.cpp = dap.configurations.cpp or {}
-
-            table.insert(dap.configurations.cpp, {
-                name = "Linux Debug",
-
-                type = "gdb",
-                request = "launch",
-
-                -- This is replaced by the Telescope-selected executable.
-                program = function()
-                    error(
-                        "Use :Debug or F1 to select the Linux executable"
-                    )
-                end,
-
-                cwd = "${workspaceFolder}",
-
-                stopAtBeginningOfMainSubprogram = false,
-            })
-
-            ----------------------------------------------------------------------
             -- Project root
             ----------------------------------------------------------------------
 
             local function project_root()
-                return vim.fs.root(0, {
-                    "CMakePresets.json",
-                    ".git",
-                    "Makefile",
-                }) or vim.fn.getcwd()
+                local cwd = vim.fn.getcwd()
+
+                local git_root = vim.fn.systemlist({
+                    "git",
+                    "-C",
+                    cwd,
+                    "rev-parse",
+                    "--show-toplevel",
+                })
+
+                if vim.v.shell_error == 0 and git_root[1] then
+                    return git_root[1]
+                end
+
+                return cwd
             end
 
             ----------------------------------------------------------------------
-            -- Find DAP configuration
+            -- Linux DAP configuration
+            ----------------------------------------------------------------------
+
+            dap.configurations.c = dap.configurations.c or {}
+            dap.configurations.cpp = dap.configurations.cpp or {}
+
+            local linux_configuration = {
+                name = "Linux Debug",
+                type = "gdb",
+                request = "launch",
+
+                program = function()
+                    error("Use :Debug to select the Linux executable")
+                end,
+
+                cwd = "${workspaceFolder}",
+
+                stopAtBeginningOfMainSubprogram = false,
+
+                args = {},
+
+                runInTerminal = false,
+            }
+
+            table.insert(dap.configurations.c, linux_configuration)
+            table.insert(dap.configurations.cpp, linux_configuration)
+
+            ----------------------------------------------------------------------
+            -- Find DAP configuration by name
             ----------------------------------------------------------------------
 
             local function find_configuration(name)
-                local filetype = vim.bo.filetype
+                local configurations = {}
 
-                local configurations = dap.configurations[filetype]
-
-                if not configurations or #configurations == 0 then
-                    configurations = dap.configurations.c
+                for _, configuration in ipairs(dap.configurations.c or {}) do
+                    if configuration.name == name then
+                        table.insert(configurations, configuration)
+                    end
                 end
 
-                for _, configuration in ipairs(configurations or {}) do
+                for _, configuration in ipairs(dap.configurations.cpp or {}) do
                     if configuration.name == name then
-                        return configuration
+                        table.insert(configurations, configuration)
                     end
+                end
+
+                if #configurations > 0 then
+                    return configurations[1]
                 end
 
                 return nil
             end
 
             ----------------------------------------------------------------------
-            -- Telescope Linux executable picker
+            -- Select Linux executable
             ----------------------------------------------------------------------
 
             local function select_linux_executable(callback)
-                local telescope_builtin = require("telescope.builtin")
                 local telescope_actions = require("telescope.actions")
                 local telescope_action_state =
                 require("telescope.actions.state")
@@ -212,6 +214,7 @@ return {
                         "Build directory not found:\n" .. build_dir,
                         vim.log.levels.ERROR
                     )
+
                     return
                 end
 
@@ -222,8 +225,6 @@ return {
 
                     hidden = true,
 
-                    -- Search all files under build/.
-                    -- We will validate that the selected file is executable.
                     find_command = {
                         "find",
                         ".",
@@ -241,6 +242,11 @@ return {
                             telescope_action_state.get_selected_entry()
 
                             if not entry then
+                                vim.notify(
+                                    "No file selected",
+                                    vim.log.levels.ERROR
+                                )
+
                                 return
                             end
 
@@ -250,9 +256,10 @@ return {
 
                             if not path then
                                 vim.notify(
-                                    "No file selected",
+                                    "No file path found",
                                     vim.log.levels.ERROR
                                 )
+
                                 return
                             end
 
@@ -274,17 +281,21 @@ return {
 
                             if not stat or stat.type ~= "file" then
                                 vim.notify(
-                                    "Selected path is not a regular file",
+                                    "Selected path is not a regular file:\n"
+                                    .. path,
                                     vim.log.levels.ERROR
                                 )
+
                                 return
                             end
 
                             if vim.fn.executable(path) ~= 1 then
                                 vim.notify(
-                                    "Selected file is not executable:\n" .. path,
+                                    "Selected file is not executable:\n"
+                                    .. path,
                                     vim.log.levels.ERROR
                                 )
+
                                 return
                             end
 
@@ -298,6 +309,7 @@ return {
                     end,
                 })
             end
+
             ----------------------------------------------------------------------
             -- Start Linux debugging
             ----------------------------------------------------------------------
@@ -311,6 +323,7 @@ return {
                         "Linux Debug configuration was not found",
                         vim.log.levels.ERROR
                     )
+
                     return
                 end
 
@@ -319,6 +332,7 @@ return {
                     vim.deepcopy(configuration)
 
                     launch_configuration.program = path
+                    launch_configuration.cwd = project_root()
 
                     dap.run(launch_configuration)
                 end)
@@ -353,22 +367,79 @@ return {
                         end
 
                         if choice == "STM32 Debug" then
-                            local configuration =
-                            find_configuration("STM32 Debug")
-
-                            if not configuration then
+                            if _G.start_stm32_debug then
+                                _G.start_stm32_debug()
+                            else
                                 vim.notify(
-                                    "STM32 Debug configuration was not found",
+                                    "STM32 debugger is not available. "
+                                    .. "Check cortex-debug.lua.",
                                     vim.log.levels.ERROR
                                 )
-                                return
                             end
-
-                            dap.run(configuration)
                         end
                     end
                 )
             end
+
+            ----------------------------------------------------------------------
+            -- DAP UI listeners
+            ----------------------------------------------------------------------
+
+            -- dap.listeners.before.attach.dapui_config = function()
+            --     dapui.open()
+            -- end
+            --
+            -- dap.listeners.before.launch.dapui_config = function()
+            --     dapui.open()
+            -- end
+            --
+            -- dap.listeners.before.event_terminated.dapui_config = function()
+            --     dapui.close()
+            -- end
+            --
+            -- dap.listeners.before.event_exited.dapui_config = function()
+            --     dapui.close()
+            -- end
+
+            ----------------------------------------------------------------------
+            -- Keymaps
+            ----------------------------------------------------------------------
+
+            vim.keymap.set("n", "<F5>", dap.continue, {
+                desc = "DAP Continue",
+            })
+
+            vim.keymap.set("n", "<F10>", dap.step_over, {
+                desc = "DAP Step Over",
+            })
+
+            vim.keymap.set("n", "<F11>", dap.step_into, {
+                desc = "DAP Step Into",
+            })
+
+            vim.keymap.set("n", "<F12>", dap.step_out, {
+                desc = "DAP Step Out",
+            })
+
+            vim.keymap.set("n", "<leader>db", dap.toggle_breakpoint, {
+                desc = "DAP Toggle Breakpoint",
+            })
+
+            vim.keymap.set("n", "<leader>dB", function()
+                dap.set_breakpoint(
+                    vim.fn.input("Breakpoint condition: ")
+                )
+            end, {
+                    desc = "DAP Conditional Breakpoint",
+                })
+
+            vim.keymap.set("n", "<leader>dr", dap.repl.open, {
+                desc = "DAP REPL",
+            })
+
+            vim.keymap.set("n", "<leader>du", dapui.toggle, {
+                desc = "DAP UI Toggle",
+            })
 
             ----------------------------------------------------------------------
             -- User command

@@ -1,330 +1,292 @@
 return {
   {
-    "mfussenegger/nvim-dap",
+    "jedrzejboczar/nvim-dap-cortex-debug",
 
     dependencies = {
+      "mfussenegger/nvim-dap",
       "rcarriga/nvim-dap-ui",
-      "theHamsta/nvim-dap-virtual-text",
-      "nvim-neotest/nvim-nio",
       "nvim-telescope/telescope.nvim",
     },
 
     config = function()
       local dap = require("dap")
-      local dapui = require("dapui")
+      local telescope = require("telescope.builtin")
+      local cortex_debug = require("dap-cortex-debug")
 
       ----------------------------------------------------------------------
-      -- DAP UI
+      -- Cortex-Debug setup
       ----------------------------------------------------------------------
 
-      ---@diagnostic disable-next-line: missing-fields
-      dapui.setup({
-        layouts = {
-          {
-            position = "right",
-            size = 40,
-
-            elements = {
-              {
-                id = "scopes",
-                size = 1.0,
-              },
-
-              -- RTT disabled for now.
-              -- { id = "rtt", size = 0.5 },
-            },
-          },
-        },
+      cortex_debug.setup({
+        debug = false,
       })
 
       ----------------------------------------------------------------------
-      -- Virtual text
+      -- Workspace
       ----------------------------------------------------------------------
 
-      require("nvim-dap-virtual-text").setup()
+      local function workspace_root()
+        local cwd = vim.fn.getcwd()
 
-      ----------------------------------------------------------------------
-      -- DAP signs
-      ----------------------------------------------------------------------
+        local git_root = vim.fn.systemlist({
+          "git",
+          "-C",
+          cwd,
+          "rev-parse",
+          "--show-toplevel",
+        })
 
-      vim.fn.sign_define("DapBreakpoint", {
-        text = "●",
-        texthl = "DiagnosticSignError",
-        linehl = "",
-        numhl = "",
-      })
+        if vim.v.shell_error == 0 and git_root[1] then
+          return git_root[1]
+        end
 
-      vim.fn.sign_define("DapStopped", {
-        text = "→",
-        texthl = "DiagnosticSignWarn",
-        linehl = "CursorLine",
-        numhl = "",
-      })
-
-      vim.fn.sign_define("DapBreakpointRejected", {
-        text = "○",
-        texthl = "DiagnosticSignHint",
-        linehl = "",
-        numhl = "",
-      })
-
-      ----------------------------------------------------------------------
-      -- Linux CodeLLDB adapter
-      ----------------------------------------------------------------------
-
-      dap.adapters.codelldb = {
-        type = "server",
-        port = "${port}",
-
-        executable = {
-          command = "codelldb",
-          args = {
-            "--port",
-            "${port}",
-          },
-        },
-      }
-
-      ----------------------------------------------------------------------
-      -- Linux C configuration
-      ----------------------------------------------------------------------
-
-      dap.configurations.c = dap.configurations.c or {}
-
-      table.insert(dap.configurations.c, {
-        name = "Linux Debug",
-
-        type = "codelldb",
-        request = "launch",
-
-        -- This is replaced by the Telescope-selected executable.
-        program = function()
-          error("Use :Debug or F1 to select the Linux executable")
-        end,
-
-        cwd = "${workspaceFolder}",
-
-        stopOnEntry = false,
-
-        terminal = "integrated",
-      })
-
-      ----------------------------------------------------------------------
-      -- Linux C++ configuration
-      ----------------------------------------------------------------------
-
-      dap.configurations.cpp = dap.configurations.cpp or {}
-
-      table.insert(dap.configurations.cpp, {
-        name = "Linux Debug",
-
-        type = "codelldb",
-        request = "launch",
-
-        -- This is replaced by the Telescope-selected executable.
-        program = function()
-          error("Use :Debug or F1 to select the Linux executable")
-        end,
-
-        cwd = "${workspaceFolder}",
-
-        stopOnEntry = false,
-
-        terminal = "integrated",
-      })
-
-      ----------------------------------------------------------------------
-      -- Project root
-      ----------------------------------------------------------------------
-
-      local function project_root()
-        return vim.fs.root(0, {
-          "CMakePresets.json",
-          ".git",
-          "Makefile",
-        }) or vim.fn.getcwd()
+        return cwd
       end
 
       ----------------------------------------------------------------------
-      -- Find DAP configuration
+      -- Find OpenOCD configuration
       ----------------------------------------------------------------------
 
-      local function find_configuration(name)
-        local filetype = vim.bo.filetype
+      local function find_openocd_config()
+        local root = workspace_root()
 
-        local configurations = dap.configurations[filetype]
+        local configs = vim.fn.glob(
+          root .. "/**/openocd.cfg",
+          true,
+          true
+        )
 
-        if not configurations or #configurations == 0 then
-          configurations = dap.configurations.c
+        if #configs == 0 then
+          vim.notify(
+            "No openocd.cfg found in workspace.",
+            vim.log.levels.ERROR
+          )
+
+          return nil
         end
 
-        for _, configuration in ipairs(configurations or {}) do
-          if configuration.name == name then
-            return configuration
+        if #configs == 1 then
+          return configs[1]
+        end
+
+        return configs
+      end
+
+      ----------------------------------------------------------------------
+      -- Find ELF files
+      ----------------------------------------------------------------------
+
+      local function find_elf_files()
+        local root = workspace_root()
+        local build_dir = root .. "/build"
+
+        if vim.fn.isdirectory(build_dir) == 0 then
+          vim.notify(
+            "Build directory not found: " .. build_dir,
+            vim.log.levels.ERROR
+          )
+
+          return {}
+        end
+
+        local elf_files = vim.fn.glob(
+          build_dir .. "/**/*.elf",
+          true,
+          true
+        )
+
+        local valid_elf_files = {}
+
+        for _, elf_file in ipairs(elf_files) do
+          if vim.fn.filereadable(elf_file) == 1 then
+            table.insert(valid_elf_files, elf_file)
           end
         end
+
+        return valid_elf_files
+      end
+
+      ----------------------------------------------------------------------
+      -- Find ARM-compatible GDB
+      ----------------------------------------------------------------------
+
+      local function find_arm_gdb()
+        local candidates = {
+          "arm-none-eabi-gdb",
+          "gdb-multiarch",
+        }
+
+        for _, executable in ipairs(candidates) do
+          if vim.fn.executable(executable) == 1 then
+            return executable
+          end
+        end
+
+        vim.notify(
+          "No ARM-compatible GDB found. Install gdb-multiarch.",
+          vim.log.levels.ERROR
+        )
 
         return nil
       end
 
       ----------------------------------------------------------------------
-      -- Telescope Linux executable picker
+      -- Select an item using Telescope
       ----------------------------------------------------------------------
 
-      local function select_linux_executable(callback)
-        local telescope_builtin = require("telescope.builtin")
-        local telescope_actions = require("telescope.actions")
-        local telescope_action_state =
-          require("telescope.actions.state")
+      local function select_from_telescope(items, prompt, callback)
+        local pickers = require("telescope.pickers")
+        local finders = require("telescope.finders")
+        local conf = require("telescope.config").values
+        local actions = require("telescope.actions")
+        local action_state = require("telescope.actions.state")
 
-        local root = project_root()
+        pickers.new({}, {
+          prompt_title = prompt,
 
-        telescope_builtin.find_files({
-          cwd = root,
+          finder = finders.new_table({
+            results = items,
+          }),
 
-          hidden = true,
-
-          prompt_title = "Select Linux executable",
+          sorter = conf.generic_sorter({}),
 
           attach_mappings = function(prompt_bufnr, map)
-            local function select_file()
-              local entry =
-                telescope_action_state.get_selected_entry()
+            local function select_item()
+              local selection = action_state.get_selected_entry()
 
-              if not entry then
-                return
+              actions.close(prompt_bufnr)
+
+              if selection then
+                callback(selection.value)
               end
-
-              local path = entry.path or entry.value
-
-              telescope_actions.close(prompt_bufnr)
-
-              if not path then
-                vim.notify(
-                  "No file selected",
-                  vim.log.levels.ERROR
-                )
-                return
-              end
-
-              if not vim.fs.is_absolute(path) then
-                path = vim.fs.joinpath(root, path)
-              end
-
-              path = vim.fs.normalize(path)
-
-              local stat = vim.uv.fs_stat(path)
-
-              if not stat or stat.type ~= "file" then
-                vim.notify(
-                  "Selected path is not a regular file",
-                  vim.log.levels.ERROR
-                )
-                return
-              end
-
-              if vim.fn.executable(path) ~= 1 then
-                vim.notify(
-                  "Selected file is not executable:\n" .. path,
-                  vim.log.levels.ERROR
-                )
-                return
-              end
-
-              callback(path)
             end
 
-            map("i", "<CR>", select_file)
-            map("n", "<CR>", select_file)
+            map("i", "<CR>", select_item)
+            map("n", "<CR>", select_item)
 
             return true
           end,
-        })
+        }):find()
       end
 
       ----------------------------------------------------------------------
-      -- Start Linux debugging
+      -- Select OpenOCD config
       ----------------------------------------------------------------------
 
-      local function start_linux_debug()
-        local configuration =
-          find_configuration("Linux Debug")
+      local function select_openocd_config(callback)
+        local configs = find_openocd_config()
 
-        if not configuration then
-          vim.notify(
-            "Linux Debug configuration was not found",
-            vim.log.levels.ERROR
-          )
+        if not configs then
           return
         end
 
-        select_linux_executable(function(path)
-          local launch_configuration =
-            vim.deepcopy(configuration)
-
-          launch_configuration.program = path
-
-          dap.run(launch_configuration)
-        end)
-      end
-
-      ----------------------------------------------------------------------
-      -- Debug target selector
-      ----------------------------------------------------------------------
-
-      local function debug_target_selector()
-        if dap.session() then
-          dap.continue()
+        if type(configs) == "string" then
+          callback(configs)
           return
         end
 
-        vim.ui.select(
-          {
-            "Linux Debug",
-            "STM32 Debug",
-          },
-          {
-            prompt = "Select debug target:",
-          },
-          function(choice)
-            if not choice then
-              return
-            end
-
-            if choice == "Linux Debug" then
-              start_linux_debug()
-              return
-            end
-
-            if choice == "STM32 Debug" then
-              local configuration =
-                find_configuration("STM32 Debug")
-
-              if not configuration then
-                vim.notify(
-                  "STM32 Debug configuration was not found",
-                  vim.log.levels.ERROR
-                )
-                return
-              end
-
-              dap.run(configuration)
-            end
-          end
+        select_from_telescope(
+          configs,
+          "Select OpenOCD configuration",
+          callback
         )
       end
 
       ----------------------------------------------------------------------
-      -- User command
+      -- STM32 configuration
       ----------------------------------------------------------------------
 
-      vim.api.nvim_create_user_command(
-        "Debug",
-        debug_target_selector,
-        {
-          desc = "Select Linux or STM32 debug target",
-        }
-      )
+      local stm32_configuration = {
+        name = "STM32 Debug",
+        type = "cortex-debug",
+        request = "launch",
+
+        cwd = "${workspaceFolder}",
+
+        servertype = "openocd",
+        serverpath = "openocd",
+
+        runToEntryPoint = "main",
+
+        -- Assigned dynamically before dap.run().
+        executable = nil,
+        configFiles = nil,
+        gdbPath = nil,
+      }
+
+      ----------------------------------------------------------------------
+      -- Start STM32 debugging
+      ----------------------------------------------------------------------
+
+      local function start_stm32_debug()
+        local gdb_path = find_arm_gdb()
+
+        if not gdb_path then
+          return
+        end
+
+        local elf_files = find_elf_files()
+
+        if #elf_files == 0 then
+          vim.notify(
+            "No .elf file found under " ..
+            workspace_root() .. "/build",
+            vim.log.levels.ERROR
+          )
+
+          return
+        end
+
+        local function launch_with_config(openocd_config)
+          if not openocd_config then
+            return
+          end
+
+          local function launch_debugger(elf_path)
+            if not elf_path then
+              return
+            end
+
+            local configuration = vim.deepcopy(stm32_configuration)
+
+            configuration.gdbPath = gdb_path
+            configuration.executable = elf_path
+            configuration.configFiles = {
+              openocd_config,
+            }
+
+            dap.run(configuration)
+          end
+
+          if #elf_files == 1 then
+            launch_debugger(elf_files[1])
+          else
+            select_from_telescope(
+              elf_files,
+              "Select STM32 ELF",
+              launch_debugger
+            )
+          end
+        end
+
+        select_openocd_config(launch_with_config)
+      end
+
+      ----------------------------------------------------------------------
+      -- Expose launcher to dap.lua
+      ----------------------------------------------------------------------
+
+      _G.start_stm32_debug = start_stm32_debug
+
+      ----------------------------------------------------------------------
+      -- Register STM32 configurations
+      ----------------------------------------------------------------------
+
+      dap.configurations.c = dap.configurations.c or {}
+      dap.configurations.cpp = dap.configurations.cpp or {}
+
+      table.insert(dap.configurations.c, stm32_configuration)
+      table.insert(dap.configurations.cpp, stm32_configuration)
     end,
   },
 }
