@@ -99,7 +99,7 @@ return {
 
         -- This is replaced by the Telescope-selected executable.
         program = function()
-          error("Use :KohiDebug or F1 to select the Linux executable")
+          error("Use :Debug or F1 to select the Linux executable")
         end,
 
         cwd = "${workspaceFolder}",
@@ -123,7 +123,7 @@ return {
 
         -- This is replaced by the Telescope-selected executable.
         program = function()
-          error("Use :KohiDebug or F1 to select the Linux executable")
+          error("Use :Debug or F1 to select the Linux executable")
         end,
 
         cwd = "${workspaceFolder}",
@@ -319,7 +319,7 @@ return {
       ----------------------------------------------------------------------
 
       vim.api.nvim_create_user_command(
-        "KohiDebug",
+        "Debug",
         debug_target_selector,
         {
           desc = "Select Linux or STM32 debug target",
